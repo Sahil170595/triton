@@ -6,6 +6,7 @@ import triton.language as tl
 
 from triton.language.extra import libdevice
 from triton.language.extra.libdevice import fast_dividef as my_fast_dividef
+from triton._internal_testing import is_cuda
 
 
 @pytest.mark.parametrize("dtype_str", ["float32", "float64"])
@@ -86,6 +87,22 @@ def test_popc(device):
     triton_popc[(1, )](x, y, SIZE=x.numel())
 
     assert torch.equal(y.cpu(), torch.tensor([0, 1, 1, 2, 1, 3, 1, 4], dtype=torch.int32))
+
+
+@pytest.mark.skipif(not is_cuda(), reason="mul24 requires CUDA libdevice")
+def test_mul24_signed_widen(device):
+
+    @triton.jit
+    def kernel(x_ptr, y_ptr, out_ptr, SIZE: tl.constexpr):
+        offs = tl.arange(0, SIZE)
+        product = libdevice.mul24(tl.load(x_ptr + offs), tl.load(y_ptr + offs))
+        tl.store(out_ptr + offs, product.to(tl.int64))
+
+    x = torch.tensor([65536, 65536, -65536, -3], device=device, dtype=torch.int32)
+    y = torch.tensor([65536, 65535, 65535, 7], device=device, dtype=torch.int32)
+    out = torch.empty_like(x, dtype=torch.int64)
+    kernel[(1, )](x, y, out, x.numel())
+    assert torch.equal(out.cpu(), torch.tensor([0, -65536, 65536, -21], dtype=torch.int64))
 
 
 @pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
